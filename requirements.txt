@@ -1,0 +1,7 @@
+Flask==2.3.3
+flask-cors==4.0.0
+websockets==11.0.3
+aiohttp>=3.9.1
+requests==2.31.0
+frappe-client
+python-dotenv

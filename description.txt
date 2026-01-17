@@ -1,0 +1,56 @@
+Run the Application
+python version 3.12
+PS D:\test> python --version
+Python 3.12.6
+PS D:\test> py -3.12 -m venv venv
+PS D:\test> venv\Scripts\activate
+(venv) PS D:\test> python -m pip install --upgrade pip
+Install dependencies:
+
+bash
+pip install --no-cache-dir -r requirements.txt
+Run the Flask app:
+
+bash
+python app.py
+API Endpoints
+1. Start Connection
+POST http://localhost:5000/api/start
+Starts WebSocket connection
+
+
+2. Stop Connection
+POST http://localhost:5000/api/stop
+Stops WebSocket connection immediately
+
+Disables all reconnection attempts
+
+Clears reconnection state
+
+3. Get Status
+bash
+GET http://localhost:5000/api/status
+Returns current connection state
+
+Includes heartbeat count, reconnection attempts, etc.
+
+4. Get Messages
+bash
+GET http://localhost:5000/api/messages?limit=100
+Returns recent WebSocket messages
+
+Optional limit parameter (default: 100)
+
+5. Clear Messages
+bash
+POST http://localhost:5000/api/clear-messages
+Clears all stored messages
+
+6. Send Manual Heartbeat
+bash
+POST http://localhost:5000/api/send-heartbeat
+Sends a manual heartbeat
+
+7. Health Check
+bash
+GET http://localhost:5000/health
