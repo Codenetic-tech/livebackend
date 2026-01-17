@@ -20,7 +20,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-client = FrappeClient("http://192.168.1.11")
+client = FrappeClient(os.getenv("FRAPPE_URL"))
 client.authenticate(os.getenv("API_KEY"), os.getenv("API_SECRET"))
 
 # Configure logging
