@@ -7,7 +7,8 @@ import threading
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, flash, make_response, Response, stream_with_context
+from functools import wraps
 from flask_cors import CORS
 import websockets
 import aiohttp
@@ -18,29 +19,45 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "default_secret_key_if_not_set")
 CORS(app)
 
 client = FrappeClient(os.getenv("FRAPPE_URL"))
 client.authenticate(os.getenv("API_KEY"), os.getenv("API_SECRET"))
 
 # Configure logging
-log_dir = "logs"
+basedir = os.path.dirname(os.path.abspath(__file__))
+log_dir = os.path.join(basedir, "logs")
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-log_date = datetime.now().strftime("%d.%m.%Y")
+log_date = datetime.now().strftime("%Y-%m-%d")
 log_file = os.path.join(log_dir, f"orderlog_{log_date}.log")
 
-# Create handlers
-file_handler = logging.FileHandler(log_file, encoding='utf-8')
-file_handler.setLevel(logging.INFO)
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.WARNING) # Reduce terminal noise
+# Setup specific logger for orders
+order_logger = logging.getLogger('order_logger')
+order_logger.setLevel(logging.INFO)
+order_logger.propagate = False # Do not propagate to root logger
 
+# Handler for order logger (File only)
+try:
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    order_logger.addHandler(file_handler)
+except OSError as e:
+    print(f"Warning: Could not create log file at {log_file} ({e}). using fallback.")
+    fallback_file = os.path.join(basedir, f"orderlog_fallback_{int(time.time())}.log")
+    file_handler = logging.FileHandler(fallback_file, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    order_logger.addHandler(file_handler)
+
+# Configure root logger for console only
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.WARNING) 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[file_handler, console_handler]
+    handlers=[console_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -55,27 +72,46 @@ class WebSocketManager:
         self.reconnect_attempts = 0
         self.webhook_sends = 0
         self.max_reconnect_attempts = 5
-        self.should_reconnect = False  # Control flag for reconnection
+        self.should_reconnect = False
         self.messages = []
         self.heartbeat_task = None
         self.reconnect_task = None
         self.loop = None
         self.thread = None
+        self.listeners = [] # List of queues for SSE clients
         self._loop_initialized = False
         
     def add_message(self, msg: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.messages.append(f"{timestamp}: {msg}")
-        # Keep only last 1000 messages to prevent memory issues
+        # Format message to match what UI expects (optional, but good for consistency)
+        # But for SSE we just send the raw text usually, or the formatted line.
+        # The existing code appends "timestamp: msg" to self.messages
+        full_msg = f"{timestamp}: {msg}"
+        
+        self.messages.append(full_msg)
         if len(self.messages) > 1000:
             self.messages = self.messages[-1000:]
-        logger.info(msg)
+            
+        # Broadcast to all SSE listeners
+        for q in self.listeners[:]:
+            try:
+                q.put(full_msg)
+            except Exception:
+                self.listeners.remove(q)
+        
+        # Removed generic logger.info(msg) to prevent polluting the console/logs with UI chatter
+        # logger.info(msg) 
+
+    def listen(self):
+        """Register a new listener queue for SSE"""
+        q = queue.Queue()
+        self.listeners.append(q)
+        return q 
 
     def ensure_event_loop(self):
         """Ensure an event loop exists for async operations"""
         if self.loop is None and not self._loop_initialized:
             try:
-                # Create new event loop
                 self.loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(self.loop)
             except Exception as e:
@@ -102,25 +138,10 @@ def process_order_queue():
                 formatted_date = None
                 if norentm:
                     try:
-                        # Input format from user request: "19:28:42 16-01-2026"
-                        # Which corresponds to "%H:%M:%S %d-%m-%Y"
                         dt_obj = datetime.strptime(norentm, "%H:%M:%S %d-%m-%Y")
-                        # Output format for Frappe/MySQL: "2026-01-16 19:28:42"
                         formatted_date = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
                     except ValueError:
                         try:
-                             # Fallback for potential alternative format or if already correct
-                             # trying to parse potential "DD-MM-YYYY HH:MM:SS" or similar
-                             # But logs show: "Incorrect datetime value: '19:59:09 16-01-2026'
-                             # This confirms the DB received the raw string instead of the formatted one
-                             # Wait, the logs say: Incorrect datetime value: '19:59:09 16-01-2026'
-                             # This means it WAS trying to insert the original string '19:59:09 16-01-2026'
-                             # So formatted_date mapping might have failed or not been used?
-                             # Ah, if formatted_date is None (exception raised), it falls back to now()
-                             # BUT, in the dict below: "norentm": formatted_date or ...
-                             # If my parsing works, it should be fine.
-                             # Let's add extra logging to debug exactly what we parsed.
-                             logger.warning(f"Could not parse date: {norentm}")
                              formatted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         except Exception:
                              formatted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -128,34 +149,27 @@ def process_order_queue():
                 # Prepare document
                 doc = {
                     "doctype": "Sky Order Feed",
-                    **order_data,  # Unpack original data first
-                    "norentm": formatted_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S") # Overwrite with formatted date
+                    **order_data,
+                    "norentm": formatted_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                
-                # Cleanup/Exclude fields not needed or that clash?
-                # User said "all the fields created everything is data field", so we can probably dump everything.
-                # However, 'doctype' is set manually.
                 
                 logger.info(f"📤 Inserting order {order_id} to Frappe...")
                 
                 # Insert into Frappe
                 try:
                     new_doc = client.insert(doc)
-                    logger.info(f"✅ Order {order_id} created in Frappe: {new_doc.get('name')}")
+                    msg = f"✅ Order {order_id} created in Frappe: {new_doc.get('name')}"
+                    logger.info(msg)
+                    order_logger.info(msg) # Log to file
                 except Exception as e:
-                    # Check if it's a duplicate entry error
                     error_str = str(e)
                     if "Duplicate entry" in error_str or "IntegrityError" in error_str:
                         logger.info(f"ℹ️ Order {order_id} exists. Updating status...")
-                        # Update the existing record
-                        # We need to ensure 'doctype' and 'name' (or key field) are in doc
-                        # 'norenordno' seems to be mapped to 'name' automatically by Frappe or your setup
-                        # If 'name' is not in doc, client.update might fail if it relies on it.
-                        # Assuming 'norenordno' is the name, let's make sure valid doc is passed.
-                        # Usually update requires {"doctype": "...", "name": "...", ...fields...}
-                        doc['name'] = order_id # Ensure name is set for update
+                        doc['name'] = order_id
                         updated_doc = client.update(doc)
-                        logger.info(f"🔄 Order {order_id} updated: {updated_doc.get('status')}")
+                        msg = f"🔄 Order {order_id} updated: {updated_doc.get('status')}"
+                        logger.info(msg)
+                        order_logger.info(msg) # Log to file
                     else:
                         raise e
                 
@@ -233,10 +247,18 @@ def get_susertoken():
             logger.info("Successfully fetched susertoken from Gopocket Settings")
             return token
         else:
-            logger.warning("susertoken not found in Gopocket Settings")
+            msg = "susertoken not found in Gopocket Settings"
+            logger.warning(msg)
+            ws_manager.add_message(f"⚠️ {msg}")
             return None
     except Exception as e:
-        logger.error(f"Error fetching susertoken: {e}")
+        error_msg = f"Error fetching susertoken: {e}"
+        logger.error(error_msg)
+        # Clean up error message for UI
+        if "Max retries exceeded" in str(e):
+             ws_manager.add_message("❌ Frappe Server Unreachable (Connection Timeout)")
+        else:
+             ws_manager.add_message(f"❌ {error_msg}")
         return None
 
 async def authenticate_websocket():
@@ -247,9 +269,10 @@ async def authenticate_websocket():
         token = get_susertoken()
         if not token:
              # Fallback or fail? User implies we MUST get it.
-             # If we fail, we probably shouldn't auth, but let's try with the old hardcoded one as backup 
-             # OR just fail. I will log and fail the auth if no token.
              logger.error("Cannot authenticate: missing susertoken")
+             ws_manager.add_message("❌ Authentication aborted: Missing User Token")
+             # Close connection as it's useless without auth
+             await disconnect_websocket()
              return
 
         auth_message = {
@@ -356,6 +379,9 @@ async def connect_websocket():
                     try:
                         data = json.loads(message)
                         ws_manager.add_message(f"Received: {json.dumps(data)}")
+                        # Log ONLY order messages to the file logger
+                        if data.get('t') == 'om':
+                             order_logger.info(f"Received: {json.dumps(data)}")
                         await handle_websocket_message(data)
                     except json.JSONDecodeError:
                         ws_manager.add_message(f"Received (non-JSON): {message}")
@@ -528,6 +554,24 @@ def clear_messages():
         'message': 'Messages cleared'
     })
 
+@app.route('/api/stream-logs')
+def stream_logs():
+    def generate():
+        q = ws_manager.listen()
+        try:
+            while True:
+                # Blocks until a new message is available
+                msg = q.get()
+                # Server-Sent Events format: data: <content>\n\n
+                yield f"data: {msg}\n\n"
+        except GeneratorExit:
+            ws_manager.listeners.remove(q)
+        except Exception:
+             if q in ws_manager.listeners:
+                ws_manager.listeners.remove(q)
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 @app.route('/api/send-heartbeat', methods=['POST'])
 def send_heartbeat():
     """Send manual heartbeat"""
@@ -561,78 +605,44 @@ def health_check():
         'connection_status': ws_manager.connection_status
     })
 
-@app.route('/')
-def index():
-    """Simple homepage"""
-    return '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>WebSocket Manager API</title>
-        <style>
-            body { font-family: Arial, sans-serif; margin: 40px; }
-            .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-            .method { font-weight: bold; color: #007bff; }
-            .url { font-family: monospace; background: #e9ecef; padding: 2px 5px; }
-        </style>
-    </head>
-    <body>
-        <h1>WebSocket Manager API</h1>
-        <p>Use the following endpoints to control the WebSocket connection:</p>
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/', methods=['GET', 'POST'])
+def login():
+    if 'logged_in' in session:
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        <div class="endpoint">
-            <span class="method">POST</span> <span class="url">/api/start</span>
-            <p>Start WebSocket connection with auto-reconnection enabled</p>
-        </div>
-        
-        <div class="endpoint">
-            <span class="method">POST</span> <span class="url">/api/stop</span>
-            <p>Stop WebSocket connection (disables all reconnection)</p>
-        </div>
-        
-        <div class="endpoint">
-            <span class="method">GET</span> <span class="url">/api/status</span>
-            <p>Get current connection status</p>
-        </div>
-        
-        <div class="endpoint">
-            <span class="method">GET</span> <span class="url">/api/messages?limit=100</span>
-            <p>Get recent WebSocket messages</p>
-        </div>
-        
-        <div class="endpoint">
-            <span class="method">POST</span> <span class="url">/api/send-heartbeat</span>
-            <p>Send manual heartbeat</p>
-        </div>
-        
-        <div class="endpoint">
-            <span class="method">GET</span> <span class="url">/health</span>
-            <p>Health check endpoint</p>
-        </div>
-        
-        <p>Current Status: <strong id="status">Loading...</strong></p>
-        
-        <script>
-            // Fetch current status
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('status').textContent = data.connection_status;
-                    document.getElementById('status').style.color = 
-                        data.connection_status.includes('Connected') ? 'green' : 
-                        data.connection_status.includes('Connecting') ? 'orange' : 'red';
-                })
-                .catch(error => {
-                    document.getElementById('status').textContent = 'Error fetching status';
-                });
-        </script>
-    </body>
-    </html>
-    '''
+        if username == os.getenv("ADMIN_USERNAME") and password == os.getenv("ADMIN_PASSWORD"):
+            session['logged_in'] = True
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid Credentials', 'error')
+            
+    return render_template('login_new.html')
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard_new.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     # Initialize event loop
     ws_manager.ensure_event_loop()
     
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)

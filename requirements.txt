@@ -5,3 +5,4 @@ aiohttp>=3.9.1
 requests==2.31.0
 frappe-client
 python-dotenv
+gunicorn==21.2.0

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Sky Order Feed</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Scrollbar for Logs */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1f2937;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #4b5563;
+        }
+
+        .glass-panel {
+            background: rgba(31, 41, 55, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+
+<body class="bg-gray-950 text-gray-100 min-h-screen pb-10">
+
+    <!-- Navbar -->
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-3">
+                    <div
+                        class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
+                        <i data-lucide="activity" class="text-white w-5 h-5"></i>
+                    </div>
+                    <span
+                        class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
+                        Sky Order Feed
+                    </span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="text-xs font-mono px-3 py-1 rounded-full bg-gray-800 border border-gray-700 text-gray-400"
+                        id="clock">
+                        --:--:--
+                    </div>
+                    <a href="{{ url_for('logout') }}"
+                        class="text-sm font-medium text-gray-400 hover:text-white transition-colors flex items-center gap-2">
+                        <span>Logout</span>
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+        <!-- Status & Controls Header -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            <!-- Connection Status -->
+            <div class="glass-panel rounded-2xl p-6 relative overflow-hidden group">
+                <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <i data-lucide="wifi" class="w-16 h-16 text-white"></i>
+                </div>
+                <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider">Status</h3>
+                <div class="mt-4 flex items-center gap-3">
+                    <div id="status-dot"
+                        class="w-4 h-4 rounded-full bg-gray-600 shadow-[0_0_10px_rgba(0,0,0,0.5)] transition-colors duration-300">
+                    </div>
+                    <span id="connection-status" class="text-2xl font-bold text-white tracking-tight">Checking...</span>
+                </div>
+                <p id="status-detail" class="mt-2 text-sm text-gray-500 truncate">Initializing...</p>
+            </div>
+
+            <!-- Stats -->
+            <div class="glass-panel rounded-2xl p-6 flex flex-col justify-center">
+                <div class="flex justify-between items-end">
+                    <div>
+                        <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider">Orders Processed</h3>
+                        <div class="mt-2 text-3xl font-bold text-white" id="msg-count">0</div>
+                    </div>
+                    <div class="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400">
+                        <i data-lucide="database" class="w-5 h-5"></i>
+                    </div>
+                </div>
+                <div class="mt-3 text-xs text-gray-500">
+                    Session messages captured
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="glass-panel rounded-2xl p-6 flex flex-col justify-center items-center gap-4">
+                <h3 class="text-gray-400 text-sm font-medium uppercase tracking-wider w-full text-left">Controls</h3>
+                <div class="flex w-full gap-4">
+                    <button id="btn-start" onclick="startConnection()"
+                        class="flex-1 py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-900/20 transform transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                        Start
+                    </button>
+                    <button id="btn-stop" onclick="stopConnection()"
+                        class="flex-1 py-3 px-4 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold rounded-xl shadow-lg shadow-red-900/20 transform transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        <i data-lucide="square" class="w-4 h-4 fill-current"></i>
+                        Stop
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Realtime Logs -->
+        <div class="glass-panel rounded-2xl overflow-hidden flex flex-col h-[600px]">
+            <div class="p-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="terminal" class="w-4 h-4 text-gray-400"></i>
+                    <h3 class="text-sm font-medium text-gray-300">Live Execution Logs</h3>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="flex h-2 w-2 relative">
+                        <span
+                            class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span class="text-xs text-green-400 font-medium">Live</span>
+                    <button onclick="clearLogs()"
+                        class="text-xs text-gray-500 hover:text-white transition-colors ml-4 border border-gray-700 px-2 py-1 rounded hover:bg-gray-800">Clear</button>
+                </div>
+            </div>
+            <div id="log-container"
+                class="flex-1 overflow-y-auto p-6 font-mono text-sm bg-gray-950/80 custom-scrollbar space-y-1">
+                <!-- Logs will appear here -->
+                <div class="text-gray-500 italic">Waiting for logs...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // Update Clock
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').textContent = now.toLocaleTimeString();
+        }, 1000);
+
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('connection-status');
+        const statusDetail = document.getElementById('status-detail');
+        const msgCount = document.getElementById('msg-count');
+        const btnStart = document.getElementById('btn-start');
+        const btnStop = document.getElementById('btn-stop');
+        const logContainer = document.getElementById('log-container');
+
+        let lastLogCount = 0;
+        let isAutoScrolling = true;
+
+        // Auto-scroll logic
+        logContainer.addEventListener('scroll', () => {
+            const { scrollHeight, scrollTop, clientHeight } = logContainer;
+            // If user scrolls up, disable auto-scroll
+            if (scrollHeight - scrollTop - clientHeight > 50) {
+                isAutoScrolling = false;
+            } else {
+                isAutoScrolling = true;
+            }
+        });
+
+        function updateUI(data) {
+            // Update Status
+            statusText.textContent = data.is_connected ? "Running" : "Stopped";
+            statusDetail.textContent = data.connection_status;
+
+            // Common icon sets
+            const startIcon = '<i data-lucide="play" class="w-4 h-4 fill-current"></i>';
+            const stopIcon = '<i data-lucide="square" class="w-4 h-4 fill-current"></i>';
+
+            if (data.is_connected) {
+                statusDot.classList.remove('bg-gray-600', 'bg-red-500', 'bg-orange-500');
+                statusDot.classList.add('bg-green-500', 'shadow-green-500/50');
+
+                btnStart.disabled = true;
+                btnStart.innerHTML = `${startIcon} Start`;
+
+                btnStop.disabled = false;
+                btnStop.innerHTML = `${stopIcon} Stop`;
+
+            } else if (data.is_connecting) {
+                statusText.textContent = "Connecting";
+                statusDot.classList.remove('bg-gray-600', 'bg-red-500', 'bg-green-500');
+                statusDot.classList.add('bg-orange-500');
+
+                btnStart.disabled = true;
+                btnStart.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Connecting...';
+
+                btnStop.disabled = false;
+                btnStop.innerHTML = `${stopIcon} Stop`;
+
+            } else {
+                statusDot.classList.remove('bg-green-500', 'bg-orange-500', 'shadow-green-500/50');
+                statusDot.classList.add('bg-red-500');
+
+                btnStart.disabled = false;
+                btnStart.innerHTML = `${startIcon} Start`;
+
+                btnStop.disabled = true;
+                btnStop.innerHTML = `${stopIcon} Stop`;
+            }
+
+            // Re-render icons after DOM change
+            lucide.createIcons();
+
+            msgCount.textContent = data.total_messages;
+        }
+
+        function appendLogs(messages) {
+            if (messages.length === 0) return;
+
+            // Format logs with coloring based on content
+            const formattedLogs = messages.map(msg => {
+                let colorClass = 'text-gray-300';
+                if (msg.includes('Error') || msg.includes('fail') || msg.includes('✗')) colorClass = 'text-red-400';
+                else if (msg.includes('Warning')) colorClass = 'text-yellow-400';
+                else if (msg.includes('Connected') || msg.includes('✓')) colorClass = 'text-green-400';
+                else if (msg.includes('Connecting')) colorClass = 'text-blue-400';
+
+                return `<div class="${colorClass} hover:bg-white/5 px-2 py-0.5 rounded -mx-2 transition-colors">${msg}</div>`;
+            }).join('');
+
+            // If it was "Waiting for logs...", clear it
+            if (logContainer.innerHTML.includes('Waiting for logs...')) {
+                logContainer.innerHTML = '';
+            }
+
+            // Append new logs instead of overwriting -- FIXED
+            logContainer.insertAdjacentHTML('beforeend', formattedLogs); // Append new logs instead of overwriting
+            // Note: For huge lists, we should diff/append, but for <1000 lines, replace is fine and cleaner
+
+            if (isAutoScrolling) {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
+
+        async function pollStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                updateUI(data);
+            } catch (e) {
+                console.error("Status poll failed", e);
+                statusText.textContent = "Offline";
+                statusDot.classList.add('bg-gray-600');
+            }
+        }
+
+        async function pollMessages() {
+            try {
+                const res = await fetch('/api/messages?limit=1000'); // Get all buffer
+                const data = await res.json();
+                // Simple cache check to avoid re-rendering if no change
+                if (data.total !== lastLogCount) {
+                    appendLogs(data.messages);
+                    lastLogCount = data.total;
+                }
+            } catch (e) {
+                console.error("Message poll failed", e);
+            }
+        }
+
+        async function startConnection() {
+            btnStart.disabled = true;
+            btnStart.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Starting...';
+            lucide.createIcons();
+
+            try {
+                const res = await fetch('/api/start', { method: 'POST' });
+                const data = await res.json();
+                if (data.status !== 'success' && !data.message.includes('already')) {
+                    alert('Failed to start: ' + data.message);
+                }
+            } catch (e) {
+                alert('Error starting connection');
+            }
+            // Poll immediately
+            pollStatus();
+        }
+
+        async function stopConnection() {
+            btnStop.disabled = true;
+            btnStop.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Stopping...';
+            lucide.createIcons();
+
+            try {
+                const res = await fetch('/api/stop', { method: 'POST' });
+            } catch (e) {
+                alert('Error stopping connection');
+            }
+            // Poll immediately
+            pollStatus();
+        }
+
+        async function clearLogs() {
+            await fetch('/api/clear-messages', { method: 'POST' });
+            logContainer.innerHTML = '<div class="text-gray-500 italic">Logs cleared.</div>';
+            lastLogCount = 0;
+        }
+
+        // Initial fetch for existing logs
+        async function fetchInitialLogs() {
+            try {
+                const res = await fetch('/api/messages?limit=100');
+                const data = await res.json();
+                appendLogs(data.messages);
+            } catch (e) {
+                console.error("Initial log fetch failed", e);
+            }
+        }
+
+        // Setup SSE for real-time logs
+        function setupLogStream() {
+            const eventSource = new EventSource("/api/stream-logs");
+
+            eventSource.onmessage = function (event) {
+                // event.data contains the new log message
+                appendLogs([event.data]);
+            };
+
+            eventSource.onerror = function (err) {
+                console.error("EventSource failed:", err);
+                eventSource.close();
+                // Attempt reconnect after 5 seconds
+                setTimeout(setupLogStream, 5000);
+            };
+        }
+
+        // Initialize
+        pollStatus();
+        fetchInitialLogs();
+        setupLogStream();
+
+        // Interval
+        setInterval(pollStatus, 10000);
+
+    </script>
+</body>
+
+</html>

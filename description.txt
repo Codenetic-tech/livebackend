@@ -2,7 +2,7 @@ Run the Application
 python version 3.12
 PS D:\test> python --version
 Python 3.12.6
-PS D:\test> py -3.12 -m venv venv
+PS D:\test> py -3.14 -m venv venv
 PS D:\test> venv\Scripts\activate
 (venv) PS D:\test> python -m pip install --upgrade pip
 Install dependencies:
@@ -54,3 +54,8 @@ Sends a manual heartbeat
 7. Health Check
 bash
 GET http://localhost:5000/health
+
+Created a new endpoint: /api/stream-logs which keeps a connection open and pushes new log messages to the browser in real-time as they arrive.
+
+Save API Secret: 9f752866f2f1a9c
+API Key: 76bae70fef26544
