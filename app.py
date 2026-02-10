@@ -5,7 +5,7 @@ import time
 import os
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, flash, make_response, Response, stream_with_context
 from functools import wraps
@@ -25,13 +25,16 @@ CORS(app)
 client = FrappeClient(os.getenv("FRAPPE_URL"))
 client.authenticate(os.getenv("API_KEY"), os.getenv("API_SECRET"))
 
+# Define Indian Standard Time (IST)
+IST = timezone(timedelta(hours=5, minutes=30))
+
 # Configure logging
 basedir = os.path.dirname(os.path.abspath(__file__))
 log_dir = os.path.join(basedir, "logs")
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-log_date = datetime.now().strftime("%Y-%m-%d")
+log_date = datetime.now(IST).strftime("%Y-%m-%d")
 log_file = os.path.join(log_dir, f"orderlog_{log_date}.log")
 
 # Setup specific logger for orders
@@ -82,7 +85,7 @@ class WebSocketManager:
         self._loop_initialized = False
         
     def add_message(self, msg: str):
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(IST).strftime("%H:%M:%S")
         # Format message to match what UI expects (optional, but good for consistency)
         # But for SSE we just send the raw text usually, or the formatted line.
         # The existing code appends "timestamp: msg" to self.messages
@@ -142,15 +145,15 @@ def process_order_queue():
                         formatted_date = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
                     except ValueError:
                         try:
-                             formatted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                             formatted_date = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                         except Exception:
-                             formatted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                             formatted_date = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
                 # Prepare document
                 doc = {
                     "doctype": "Sky Order Feed",
                     **order_data,
-                    "norentm": formatted_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "norentm": formatted_date or datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
                 logger.info(f"📤 Inserting order {order_id} to Frappe...")

@@ -2,8 +2,9 @@ Run the Application
 python version 3.12
 PS D:\test> python --version
 Python 3.12.6
-PS D:\test> py -3.14 -m venv venv
-PS D:\test> venv\Scripts\activate
+PS D:\test> py -3.12 -m venv venv
+PS D:\test> venv\Scripts\activate  for windows
+@Codenetic-tech ➜ /workspaces/livebackend (main) $ source venv/bin/activate   for linux
 (venv) PS D:\test> python -m pip install --upgrade pip
 Install dependencies:
 
