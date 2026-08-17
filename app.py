@@ -28,32 +28,6 @@ client.authenticate(os.getenv("API_KEY"), os.getenv("API_SECRET"))
 # Define Indian Standard Time (IST)
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Configure logging
-basedir = os.path.dirname(os.path.abspath(__file__))
-log_dir = os.path.join(basedir, "logs")
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-
-log_date = datetime.now(IST).strftime("%Y-%m-%d")
-log_file = os.path.join(log_dir, f"orderlog_{log_date}.log")
-
-# Setup specific logger for orders
-order_logger = logging.getLogger('order_logger')
-order_logger.setLevel(logging.INFO)
-order_logger.propagate = False # Do not propagate to root logger
-
-# Handler for order logger (File only)
-try:
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    order_logger.addHandler(file_handler)
-except OSError as e:
-    print(f"Warning: Could not create log file at {log_file} ({e}). using fallback.")
-    fallback_file = os.path.join(basedir, f"orderlog_fallback_{int(time.time())}.log")
-    file_handler = logging.FileHandler(fallback_file, encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    order_logger.addHandler(file_handler)
-
 # Configure root logger for console only
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.WARNING) 
@@ -156,25 +130,45 @@ def process_order_queue():
                     "norentm": formatted_date or datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
-                logger.info(f"📤 Inserting order {order_id} to Frappe...")
-                
-                # Insert into Frappe
-                try:
-                    new_doc = client.insert(doc)
-                    msg = f"✅ Order {order_id} created in Frappe: {new_doc.get('name')}"
+                # Check existence first via get_value (which queries DB directly without throwing DoesNotExistError or logging server errors)
+                exists = False
+                if order_id and order_id != 'Unknown':
+                    try:
+                        res = client.get_value("Sky Order Feed", fieldname="name", filters={"name": order_id})
+                        if res:
+                            if isinstance(res, dict) and res.get("name") == order_id:
+                                exists = True
+                            elif isinstance(res, str) and res == order_id:
+                                exists = True
+                    except Exception as check_err:
+                        logger.debug(f"Error checking existence for order {order_id}: {check_err}")
+                        exists = False
+
+                if exists:
+                    logger.info(f"ℹ️ Order {order_id} exists. Updating status...")
+                    doc['name'] = order_id
+                    updated_doc = client.update(doc)
+                    status_val = updated_doc.get('status') if isinstance(updated_doc, dict) else 'OK'
+                    msg = f"🔄 Order {order_id} updated: {status_val}"
                     logger.info(msg)
-                    order_logger.info(msg) # Log to file
-                except Exception as e:
-                    error_str = str(e)
-                    if "Duplicate entry" in error_str or "IntegrityError" in error_str:
-                        logger.info(f"ℹ️ Order {order_id} exists. Updating status...")
-                        doc['name'] = order_id
-                        updated_doc = client.update(doc)
-                        msg = f"🔄 Order {order_id} updated: {updated_doc.get('status')}"
+                else:
+                    logger.info(f"📤 Inserting order {order_id} to Frappe...")
+                    try:
+                        new_doc = client.insert(doc)
+                        created_name = new_doc.get('name') if isinstance(new_doc, dict) else order_id
+                        msg = f"✅ Order {order_id} created in Frappe: {created_name}"
                         logger.info(msg)
-                        order_logger.info(msg) # Log to file
-                    else:
-                        raise e
+                    except Exception as e:
+                        error_str = str(e)
+                        if "Duplicate entry" in error_str or "IntegrityError" in error_str:
+                            logger.info(f"ℹ️ Order {order_id} exists. Updating status...")
+                            doc['name'] = order_id
+                            updated_doc = client.update(doc)
+                            status_val = updated_doc.get('status') if isinstance(updated_doc, dict) else 'OK'
+                            msg = f"🔄 Order {order_id} updated: {status_val}"
+                            logger.info(msg)
+                        else:
+                            raise e
                 
             except Exception as e:
                 # Don't log full stack trace for duplicates if we missed the catch above
@@ -382,9 +376,6 @@ async def connect_websocket():
                     try:
                         data = json.loads(message)
                         ws_manager.add_message(f"Received: {json.dumps(data)}")
-                        # Log ONLY order messages to the file logger
-                        if data.get('t') == 'om':
-                             order_logger.info(f"Received: {json.dumps(data)}")
                         await handle_websocket_message(data)
                     except json.JSONDecodeError:
                         ws_manager.add_message(f"Received (non-JSON): {message}")
